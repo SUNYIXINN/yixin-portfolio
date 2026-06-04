@@ -1,16 +1,22 @@
-# Yixin Sun — Data Analytics Portfolio
+# Data folder
 
-This repository contains selected data analysis and statistical modelling projects.
+The raw dataset is intentionally not included in this public portfolio version.
 
-## Featured project
+To reproduce the analysis, place the original file here:
 
-### Edinburgh Cycling Demand Forecasting
-A statistical modelling project analysing daily cyclist counts in Edinburgh from 2020 to 2025. The project uses exploratory data analysis, linear regression, grouped cross-validation, prediction intervals and planning-focused interpretation.
+```text
+data/raw/cycle_daily_df.Rdata
+```
 
-**Skills shown:** R, tidyverse, ggplot2, regression modelling, cross-validation, model diagnostics, forecast interpretation, data storytelling.
+The R object should be named `cycle_daily_df` and contain the columns described in `data_dictionary.md`.
 
-Open the project folder: [`edinburgh-cycling-demand/`](edinburgh-cycling-demand/)
+## R packages
 
-## Contact
-name : Yixin Sun  
-Email: sunyixin2022@163.com
+Install the packages below before running the analysis:
+
+```r
+install.packages(c(
+  "ggplot2", "dplyr", "tidyr", "lubridate",
+  "broom", "patchwork", "readr"
+))
+```
