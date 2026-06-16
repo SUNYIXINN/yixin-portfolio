@@ -1,0 +1,293 @@
+---
+title: 'Project 2: Modelling daily cycling demand in Edinburgh'
+author: 'Portfolio version: Yixin Sun and project teammates (student IDs removed for privacy)'
+date: 'Portfolio version based on an academic group project'
+output:
+  html_document:
+    df_print: paged
+  pdf_document:
+    number_sections: true
+    fig_caption: true
+    latex_engine: xelatex
+header-includes:
+- \usepackage{booktabs}
+- \usepackage{float}
+- \usepackage{amsmath}
+- \floatplacement{figure}{H}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo      = FALSE,    # This hides all code from the main body 
+  message   = FALSE, 
+  warning   = FALSE
+)
+source("code.R") # Runs all models and creates tables/plots in the background
+```
+
+# Introduction
+
+This report analyses daily cycling demand in Edinburgh using automatic counter data from 2020 to 2025. The goal is to develop a sequence of linear regression models (M0–M3) that capture the influence of weather, seasonality, day of week, and long term trends. Reliable demand models help transport planners allocate infrastructure, schedule maintenance, and promote active travel. By evaluating these models with cross-validation, we identify the best performing specifications and use it to answer practical planning problems.
+
+# Exploratory data analysis
+
+The exploratory analysis was used to describe the distribution of daily cyclist demand and to identify features relevant for later model development. For this purpose, `month` was converted to an ordered factor to preserve calendar order in plots and regression terms, while `dow` was explicitly releveled from Sunday to Saturday to retain its natural weekly sequence. A linear trend variable was also defined as the number of days since 1 January 2020, providing an interpretable measure of long run temporal change.
+
+```{r eda-summary, echo=FALSE}
+eda_summary %>%
+  kable(
+    digits = 2,
+    caption = "Summary statistics for daily cyclist count and temperature variables."
+  ) %>%
+  kable_styling(full_width = FALSE)
+```
+
+The response variable exhibits substantial variability over the study period. From Table 1, daily cyclist counts have a mean of 10,815 and a median of 10,531, with values ranging from 1,264 to 43,864, indicating a broad spread and the presence of some unusually high demand days. Mean daily temperature averages 9.69\(^{\circ}\)C, with an interquartile range from 6.25\(^{\circ}\)C to 13.54\(^{\circ}\)C, indicating sufficient variation for assessing weather effects.
+
+
+```{r Timeseries, echo=FALSE, fig.width=5.6, fig.height=3.5}
+p_ts
+```
+
+Figure 1 displays the daily cyclist count series from 2020 to 2025. A pronounced seasonal cycle is evident, with lower counts in winter and higher counts during warmer months. In addition, the overall level of the series changes over time rather than remaining constant, indicating longer run drift in cyclist demand. The earliest period appears irregular, which is consistent with potential COVID period disruption, although this pattern alone does not establish causality. Overall, the time series display supports the later inclusion of a trend term in addition to seasonal covariates.
+
+```{r box_month, echo=FALSE, fig.width=5.92, fig.height=3.7}
+p_box_month
+```
+
+Figure 2 further supports the presence of seasonality. Median cyclist counts are lowest in winter, especially in December and January, and generally higher from spring to early autumn. Several warmer months exhibit greater variability and more extreme upper tail observations. Thus, it is implied that monthly effects should be represented flexibly in later models.
+
+```{r box_dow, echo=FALSE, fig.width=5.6, fig.height=3.5}
+p_box_dow
+```
+
+Figure 3 shows a systematic within-week pattern. Median cyclist counts are lowest on Sunday and Monday, are noticeably higher from Tuesday to Friday, and remain intermediate on Saturday. This structure is consistent with a mixture of commuting and leisure cycling demand, with weekday travel appearing particularly important. The plot therefore suggests that modelling only a binary weekend indicator may be too restrictive, and it provides direct support for including day-of-week effects more flexibly in later models.
+
+```{r scatterplot, echo=FALSE, fig.width=6.5, fig.height=3.9}
+p_scatter_temp
+```
+
+Figure 4 shows a positive association between cyclist count and mean temperature. However, the smooth curve suggests that the relationship may not be strictly linear, with a steeper increase at lower temperatures and some flattening at higher values. Temperature is therefore likely to matter, but a nonlinear specification may be preferable.
+
+```{r monthly_mean_year, echo=FALSE, fig.width=6.3, fig.height=3.8}
+p_monthly_mean_year
+```
+
+Figure 5 compares monthly mean counts across years and shows that seasonal profiles differ between years. In particular, 2020-2022 appear less regular than later years, again suggesting possible COVID period disruption.  This additional plot reinforces the idea that both seasonality and longer run temporal change are important, and it suggests that year specific disruption may need to be revisited later if diagnostic plots indicate residual temporal structure.
+
+Therefore, the exploratory analysis indicates strong seasonality, systematic day-of-week effects, a positive but potentially nonlinear temperature effect, and longer run temporal change, all of which motivate the richer models considered in the following sections.
+
+
+# Baseline model M0
+The baseline model M0 is specified as:
+\[
+\text{count}_i = \beta_0 + \beta_1 \text{temp\_mean}_i + \beta_2 \text{weekend}_i + \beta_3 \text{month}_i + \varepsilon_i,
+\]
+where `month` is treated as a numeric variable. This provides a simple benchmark without day-of-week factors or a time trend.
+
+```{r m0-coef, echo=FALSE}
+m0_coef %>%
+  kable(digits = 3, caption = "Coefficient table for M0.") %>%
+  kable_styling(full_width = FALSE)
+```
+
+```{r m0-diag, echo=FALSE, fig.width=8, fig.height=6}
+diag_m0
+```
+
+M0 captures the broad seasonal pattern via the numeric month term, but the diagnostic plots reveal clear deficiencies. From Figure 6, the residuals vs fitted plot shows increasing spread with larger fitted values, indicating heteroscedasticity. Non- normality is indicated through heavy tails exhibited by the Q-Q plot. The residuals over time show a downward drift, suggesting a missing time trend. These issues motivate the inclusion of a linear trend and flexible day-of-week effects in M1.
+
+
+# Proposed models M1--M3
+## Model M1: Trend and factor terms
+
+M1 extends M0 by adding a linear trend, replacing numeric `month` with month-specific intercepts, and including full day-of-week effects:
+
+\[
+\text{count}_i = \beta_0 + \beta_1 \text{temp\_mean}_i + \beta_2 \text{weekend}_i + \beta_3 \text{trend}_i + \sum_{m=2}^{12} \gamma_m \mathbb{I}(\text{month}_i = m) + \sum_{d=2}^{7} \delta_d \mathbb{I}(\text{dow}_i = d) + \varepsilon_i
+\]
+
+The trend term captures long-run changes visible in Figure 1. Using `factor(month)` allows each month to have its own intercept, addressing the nonlinear seasonal pattern seen in Figure 2. The day-of-week factors (with Sunday as baseline) account for the systematic weekly variation shown in Figure 3.
+
+```{r m1-coef, echo=FALSE}
+m1_coef %>%
+  kable(digits = 3, caption = "Coefficient table for M1 (selected terms).") %>%
+  kable_styling(full_width = FALSE)
+```
+
+```{r m1-diag, echo=FALSE, fig.width=5.73, fig.height=4.3}
+diag_m1
+```
+
+Compared to M0, the residuals over time no longer show a strong drift, and the Q-Q plot is slightly improved but still shows right skew. The scale location plot indicates that heteroscedasticity remains. These observations lead to M2.
+
+## Model M2: Nonlinear temperature
+
+M2 replaces the linear temperature term with a quadratic function to capture the curvature observed in Figure 4:
+
+\[
+\text{count}_i = \beta_0 + \beta_1 \text{temp\_mean}_i + \beta_2 \text{temp\_mean}_i^2 + \text{(other terms as in M1)} + \varepsilon_i
+\]
+
+where “other terms as in M1” refers to the linear trend, weekend indicator, month‑specific intercepts, and day‑of‑week effects.
+
+```{r m2-coef, echo=FALSE}
+m2_coef %>%
+  kable(digits = 3, caption = "Coefficient table for M2 (selected terms).") %>%
+  kable_styling(full_width = FALSE)
+```
+
+```{r m2-diag, echo=FALSE, fig.width=8, fig.height=6}
+diag_m2
+```
+
+The quadratic term is statistically significant and improves the fit marginally. However, the Q‑Q plot still shows a heavy right tail, and the scale location plot continues to indicate nonconstant variance. This suggests that a transformation of the response or additional covariates may be needed.
+
+## Model M3: Extension (daily temperature range)
+
+Our extension adds the daily temperature range (`temp_range = temp_max - temp_min`) as an additional predictor. The rationale is that the spread between minimum and maximum temperature may capture diurnal variability, which could affect cycling decisions independently of the mean temperature. For example, a large temperature range might indicate a rapid warm up or cool down, potentially discouraging cycling. The model is:
+
+\[
+\begin{aligned}
+\text{count}_i = &\beta_0 + \beta_1 \text{temp\_mean}_i + \beta_2 \text{temp\_mean}_i^2 + \beta_3 \text{temp\_range}_i \\
+&+ \beta_4 \text{weekend}_i + \beta_5 \text{trend}_i + \sum_{m=2}^{12} \gamma_m \mathbb{I}(\text{month}_i = m) \\
+&+ \sum_{d=2}^{7} \delta_d \mathbb{I}(\text{dow}_i = d) + \varepsilon_i
+\end{aligned}
+\]
+
+```{r m3-coef, echo=FALSE}
+m3_coef %>%
+  kable(digits = 3, caption = "Coefficient table for M3.") %>%
+  kable_styling(full_width = FALSE)
+```
+
+```{r m3-diag, echo=FALSE, fig.width=5.73, fig.height=4.3}
+diag_m3
+```
+
+The coefficient for `temp_range` is negative and statistically significant, indicating that larger diurnal temperature swings are associated with lower cycling demand, holding mean temperature constant. The diagnostic plots show modest improvement over M2, particularly in the scale‑location plot, though the Q‑Q plot remains somewhat heavy tailed.
+
+
+
+# Evaluation
+## Statistical Performance
+
+## Statistical Performance
+
+We evaluate predictive performance using leave‑one‑year‑out cross‑validation (LOYO CV) for all four models. Table 6 reports the mean RMSE, MAE, DS and interval score (IS) across the six held out years (2020–2025). Lower values are better for all scores.
+
+```{r table1, echo=FALSE}
+table1_cv %>%
+  kable(digits = c(0, 1, 1, 2, 1),
+        caption = "Leave-one-year-out CV scores for M0–M3. Lower is better for all metrics.",
+        booktabs = TRUE) %>%
+  kable_styling(latex_options = "hold_position")
+```
+For our final selected model (M2, with quadratic temperature and full factor terms), we further assess monthly predictive accuracy by holding out all observations from a given month (across all years) and training on the remaining 11 months. Table 7 shows the CV RMSE and DS for each month.
+```{r table2_month, echo=FALSE}
+table2_month_cv %>%
+  kable(digits = c(0, 1, 2),
+        caption = "CV RMSE and DS by month for the final model (M2).",
+        booktabs = TRUE) %>%
+  kable_styling(latex_options = "hold_position")
+```
+
+
+### Disagreement among scores and final model choice
+
+The four scores capture different aspects of predictive performance:
+
+- **RMSE** (root mean squared error) heavily penalises large forecast errors due to the squaring operation. It is most relevant when large deviations are disproportionately costly (e.g., underestimating demand on a very busy day could lead to infrastructure strain).
+- **MAE** (mean absolute error) treats all absolute errors linearly, making it more robust to outliers than RMSE. It reflects the typical absolute error in the original unit (cyclists/day).
+- **Dawid–Sebastiani (DS) score** is a proper scoring rule that evaluates both the accuracy of the mean forecast and the calibration of the predictive variance. A lower DS indicates that the predicted uncertainty (σ) is well matched to the actual forecast errors.
+- **Interval score (IS)** assesses the quality of 95% prediction intervals, rewarding narrow intervals that achieve the nominal coverage. It penalises intervals that are too wide or that miss the true value.
+
+Because RMSE and MAE only evaluate point forecasts, while DS and IS also evaluate probabilistic calibration, they may disagree. For example, a model that correctly estimates the mean but underestimates variance will have good RMSE/MAE but poor DS and IS. Conversely, a model with slightly higher RMSE but better calibrated prediction intervals could be preferred for decision‑making under uncertainty.
+
+From Table 6, M2 and M3 perform similarly. M2 has marginally lower RMSE (4585.5 vs 4585.7) and MAE (3654.1 vs 3661.3), while M3 achieves a better interval score (IS: 25370.2 vs 25647.4). The DS scores are identical (18.06). Since the point forecast metrics (RMSE and MAE) are slightly better for M2 and the model is simpler (excluding temp_range), we select M2 as the final model for interpretability and operational planning.
+
+
+## Practical Performance
+
+### Temperature effects and nonlinearity
+To assess which temperature measure is most informative, M2 was re-fitted three times using `temp_mean`, `temp_min`, and `temp_max` as the basis for the quadratic temperature term. Among the three specifications, the model based on `temp_max` performed best on all cross-validation criteria, with the lowest RMSE (4557.0), Dawid-Sebastiani score (18.05), and interval score (25340.1). We therefore retain `temp_max` as the preferred temperature variable for this planning analysis.
+
+```{r table-temp-compare, echo=FALSE}
+table_temp_compare %>%
+  kable(
+    digits = c(0, 1, 2, 1),
+    caption = "Cross-validation comparison of M2 fitted with alternative temperature variables."
+  ) %>%
+  kable_styling(full_width = FALSE)
+```
+
+```{r table_temp_marginal, echo=FALSE}
+table_temp_marginal %>%
+  kable(
+    digits = c(0, 1),
+    col.names = c("Evaluation point", "Marginal effect (cyclists per 1°C)"),
+    caption = "Estimated marginal temperature effect for the selected M2 variant."
+  ) %>%
+  kable_styling(full_width = FALSE)
+```
+
+This result is realistically plausible. Daily cycling decisions may depend more strongly on the warmest conditions experienced during the day than on the daily mean or minimum temperature, particularly for discretionary or recreational trips. The estimated marginal effects also support a nonlinear relationship. At 5°C, a 1°C increase in temperature is associated with approximately 314.1 additional cyclists per day, whereas at 15°C the corresponding increase is 141.4 cyclists per day. Thus, temperature has a positive but diminishing effect on cycling demand, implying modest warming matters more on relatively cold days than on already mild days.
+
+### Seasonal prediction accuracy
+
+From Table 7 in Section 5.1, the final model M2 performs best in July, with RMSE 3016.6 and DS 17.21, and worst in April, with RMSE 5761.9 and DS 18.68. This indicates that predictive accuracy varies materially across the calendar year. A plausible transport planning interpretation is that midsummer demand is relatively stable and therefore easier to capture using temperature, day-of-week, month, and trend effects. By contrast, April may be harder to predict because cycling demand is more volatile during the transition into warmer conditions and may also be influenced by omitted factors such as holidays, special events, or short term disruptions. This pattern should therefore be interpreted as reflecting both a model limitation and a data limitation, rather than a purely seasonal behavioural effect.
+
+### Long-term trend and extrapolation
+
+```{r table-trend, echo=FALSE}
+table3_trend %>%
+  kable(
+    digits = c(0, 3, 0),
+    caption = "Trend coefficients from M1--M3."
+  ) %>%
+  kable_styling(full_width = FALSE)
+```
+
+Table 10 shows that the estimated time trend is negative in all three models and is highly stable across specifications. The estimated daily change is -1.895 cyclists per day in M1, -1.872 in M2, and -1.875 in M3, corresponding to annual changes of approximately -692, -683, and -684 cyclists per year respectively. This consistency indicates that the substantive conclusion about long run decline over the observed period is robust to the alternative modelling choices considered here.
+
+For the final model M2, the trend coefficient is -1.872 (95% CI: -2.145 to -1.600, p < 0.001), so the downward trend is statistically significant. Relative to the predicted count at 1 January 2020 (12,462.5 cyclists per day), this implies an annual percentage change of approximately -5.48%. In practical terms, the fitted model suggests that mean daily cycling demand declined over the observation window after controlling for temperature, day-of-week effects, and seasonality.
+
+```{r p_projection, echo=FALSE, fig.width=5.92, fig.height=3.6}
+p_projection
+```
+
+The projection under fixed summer weekday conditions extends this fitted trend to 2035. In this scenario, seasonality and weekday effects are held constant at a representative summer weekday profile, and temperature is fixed at a typical summer level. Because the estimated trend is negative, the projected series declines steadily throughout the horizon. Using a planning threshold of 10,000 cyclists per day, the model suggests that this level would be reached on 28 July 2027. This threshold is preferred here because higher thresholds such as 15,000 are crossed almost immediately(~4 months) and therefore provide little long run planning insight.
+
+The COVID dip visible in 2020--2021 suggests that a single linear trend is only an approximation across the full sample period. For that reason, the negative trend should not be interpreted as a fully stable structural growth rate. More broadly, this extrapolation should be interpreted with caution for at least two reasons. First, it assumes that the linear trend estimated from 2020--2025 remains valid for another decade, despite the visible disruption associated with the pandemic period. Second, the model does not account for future infrastructure expansion, policy changes, behavioural adaptation, or other omitted drivers of cycling demand. The projection is therefore best viewed as a simple trend-based scenario rather than a realistic long-term forecast.
+
+### Identifying a poorly-fit period
+Residuals over time indicate that the poorest fitting period for the final model is `r worst_period_stats$period`. In this month, the mean residual is `r sprintf("%.1f", worst_period_stats$mean_residual)` and the RMSE is `r sprintf("%.1f", worst_period_stats$rmse)`. Because the mean residual is positive, the model systematically underpredicts cycling demand during this period. A plausible explanation is that this month reflects a temporary surge in cycling activity not fully captured by the variables included in M2. Although the model adjusts for temperature, day-of-week effects, month effects, and a linear time trend, it does not include other short-term influences such as unusual weather patterns, holiday activity, special events, or post-pandemic behavioural shifts. From a transport planning perspective, this suggests that forecast errors may become especially large during periods of abrupt demand change.
+
+```{r fig-resid-time, echo=FALSE, fig.width=8, fig.height=4.8}
+p_resid_time
+```
+
+### Temporal patterns in forecast bias
+We construct a heatmap of mean residuals by month and year for the final model M2 in order to examine whether prediction errors are randomly distributed over time. The plot shows clear temporal structure in model bias. Most months in 2023 have negative mean residuals, indicating systematic overprediction, whereas most months in 2024 have positive mean residuals, indicating systematic underprediction. Spring 2022, especially March and April, also stands out as a period of substantial underprediction, consistent with the poorly fitted period identified in Section 5.4. For transport planners, the main implication is that model reliability is not constant across the calendar. Forecasts may therefore require greater caution and wider operational margins in periods where the model shows repeated directional bias.
+
+```{r fig-resid-heatmap, echo=FALSE, message=FALSE, warning=FALSE, fig.width=8, fig.height=5}
+p_resid_heatmap
+```
+
+
+# Discussion and limitations
+
+The final model captures the main features of cycling demand in Edinburgh, including seasonality, day-of-week effects, longer run change, and nonlinear temperature effects. It improves meaningfully on the baseline model, but the diagnostics suggest that the linear model assumptions are only approximately satisfied.
+
+Looking at the model’s limitations, ordinary linear regression is being applied to a non-negative count outcome, so the model is best viewed as a practical approximation rather than a fully realistic model for cyclist demand. Next, the dataset omits potentially important drivers such as rainfall, wind, daylight hours, holidays, major events, infrastructure changes, and station availability, which likely contributes to uneven predictive performance across months and periods. Moreover, although the estimated trend is stable across models, the visible disruption in 2020–2021 means that a single linear trend over the full sample should be interpreted cautiously. For this reason, the projection to 2035 is better treated as a simple scenario under fixed conditions than as a literal long term forecast. Prediction could likely be improved by using a model better suited to count data, adding richer weather and disruption variables, and allowing a more flexible time trend. 
+
+Overall, the findings should be interpreted as specific to Edinburgh over 2020–2025 rather than assumed to generalise directly to other cities or future periods.
+
+# Appendix: Code
+
+All analysis code is in `code.R` and is reproduced below.
+
+```{r print-code, echo=TRUE, eval=FALSE, code=readLines("code.R")}
+```
+
+
